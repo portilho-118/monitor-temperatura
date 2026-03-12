@@ -1,46 +1,49 @@
 // ============================================================
 //  MIPBC1 — Módulo de Inspeção Preditiva de Baixo Custo
-//  Monitoramento de Vibração — MPU6050
-//  Base normativa: ISO 20816-3 (antigo ISO 10816-3)
+//  Versão 2.1
+//
+//  Base normativa:
+//  • Temperatura: ABNT NBR IEC 60034-1 (Máquinas Girantes)
+//  • Vibração:    ISO 20816-3 / ABNT NBR IEC 60034-14
+//
 //  CEMPT SENAI Distrito Industrial — São Luís, MA
-//  Prof. Dartisson Castro Reis
-// ============================================================
+//  Prof. Dartisson Castro Reis | Turma TEC-ELE-118
 //
-//  ZONAS ISO 20816-3 (motores/bombas médios):
-//  Zona A — até 1.4 mm/s RMS  → ÓTIMO   (máquina nova)
-//  Zona B — até 2.8 mm/s RMS  → BOM     (operação contínua)
-//  Zona C — até 7.1 mm/s RMS  → ALERTA  (investigar)
-//  Zona D — acima de 7.1 mm/s → PERIGO  (parar imediatamente)
+// ── NÍVEIS DE TEMPERATURA (ABNT NBR IEC 60034-1) ─────────────
+//  Normal  → até  60°C  → sem alerta
+//  Atenção → 60 a  80°C → badge invertido
+//  Crítico → 80 a 100°C → badge invertido piscando
+//  Perigo  → acima 100°C→ tela alternando !! PARAR !!
 //
-//  LIGAÇÃO MPU6050:
-//  VCC → 5V | GND → GND | SDA → A4 | SCL → A5
-//  AD0 → desconectado (endereço padrão 0x68)
+// ── ZONAS ISO 20816-3 (vibração em mm/s RMS) ─────────────────
+//  Zona A → até 1.4  → ÓTIMO
+//  Zona B → até 2.8  → BOM
+//  Zona C → até 7.1  → ALERTA
+//  Zona D → acima 7.1→ PERIGO
 //
-//  LIGAÇÃO OLED (já existente):
-//  VCC → 3.3V | GND → GND | SDA → A4 | SCL → A5
+// ── TELAS OLED (4 telas, 5 s cada) ──────────────────────────
+//  1 → Temperatura (termômetro gráfico + nível)
+//  2 → Vibração (valores numéricos + zona em quadrado)
+//  3 → Status WiFi (fonte grande, sem ícone)
+//  4 → Bateria % (reservada — hardware pendente)
 //
-//  THINGSPEAK:
-//  Field 1 → Temperatura Objeto
-//  Field 2 → Temperatura Ambiente
+// ── THINGSPEAK ───────────────────────────────────────────────
+//  Field 1 → Temperatura Objeto (°C)
+//  Field 2 → Temperatura Ambiente (°C)
 //  Field 3 → Vibração RMS Eixo X (mm/s)
 //  Field 4 → Vibração RMS Eixo Y (mm/s)
 //  Field 5 → Vibração RMS Eixo Z (mm/s)
 //
-//  TELAS OLED (6 telas, 5 s cada):
-//  1 → Temperatura do Objeto
-//  2 → Temperatura Ambiente
-//  3 → Vibração — valores numéricos X / Y / Z
-//  4 → Vibração — gráfico de barras horizontais
-//  5 → Zona ISO 20816-3
-//  6 → Status WiFi
+// ── LIGAÇÕES ─────────────────────────────────────────────────
+//  OLED     VCC→3.3V  GND→GND  SDA→A4  SCL→A5
+//  MLX90614 VCC→3.3V  GND→GND  SDA→A4  SCL→A5
+//  MPU6050  VCC→5V    GND→GND  SDA→A4  SCL→A5  AD0→N/C
 //
-//  BIBLIOTECAS NECESSÁRIAS:
-//  - Adafruit MPU6050
-//  - Adafruit Unified Sensor
-//  - Adafruit SSD1306
-//  - Adafruit GFX Library
-//  - Adafruit MLX90614
-//  - ThingSpeak
+// ── BIBLIOTECAS ──────────────────────────────────────────────
+//  Adafruit SSD1306 | Adafruit GFX
+//  Adafruit MLX90614
+//  Adafruit MPU6050 | Adafruit Unified Sensor
+//  ThingSpeak
 // ============================================================
 
 #include <Wire.h>
@@ -52,34 +55,36 @@
 #include <WiFiS3.h>
 #include <ThingSpeak.h>
 
-// ── Configurações WiFi e ThingSpeak ──────────────────────────
+// ── Credenciais ───────────────────────────────────────────────
 const char* WIFI_SSID    = "SEU_WIFI";
 const char* WIFI_SENHA   = "SUA_SENHA";
 unsigned long CHANNEL_ID = 2934631;
 const char*  API_KEY     = "SUA_WRITE_API_KEY";
 
-// ── Limites ISO 20816-3 (mm/s RMS) ───────────────────────────
-const float ZONA_A = 1.4;
-const float ZONA_B = 2.8;
-const float ZONA_C = 7.1;
+// ── Limites de temperatura — ABNT NBR IEC 60034-1 (°C) ───────
+const float TEMP_ATENCAO = 60.0;
+const float TEMP_CRITICO = 80.0;
+const float TEMP_PERIGO  = 100.0;
+
+// ── Limites de vibração — ISO 20816-3 (mm/s RMS) ─────────────
+const float ZONA_A        = 1.4;
+const float ZONA_B        = 2.8;
+const float ZONA_C        = 7.1;
 const float ESCALA_GRAFICO = 10.0;
 
-// ── Limite temperatura ────────────────────────────────────────
-const float TEMP_LIMITE = 60.0;
-
-// ── Configuração OLED ─────────────────────────────────────────
+// ── OLED ──────────────────────────────────────────────────────
 #define LARGURA_OLED 128
 #define ALTURA_OLED   64
 #define RESET_OLED    -1
 Adafruit_SSD1306 display(LARGURA_OLED, ALTURA_OLED, &Wire, RESET_OLED);
 
 // ── Sensores ──────────────────────────────────────────────────
-Adafruit_MPU6050 mpu;
+Adafruit_MPU6050  mpu;
 Adafruit_MLX90614 mlx;
 
-// ── Controle de telas OLED ────────────────────────────────────
+// ── Controle de telas ─────────────────────────────────────────
 int telaAtual             = 0;
-const int NUM_TELAS       = 6;
+const int NUM_TELAS       = 4;
 unsigned long ultimaTroca = 0;
 const long INTERVALO_TELA = 5000;
 
@@ -87,15 +92,23 @@ const long INTERVALO_TELA = 5000;
 unsigned long ultimoEnvio  = 0;
 const long INTERVALO_ENVIO = 15000;
 
-// ── Aquisição de amostras para RMS ───────────────────────────
+// ── Aquisição RMS ─────────────────────────────────────────────
 const int NUM_AMOSTRAS = 100;
 const int INTERVALO_MS = 10;
 
-// ── Calibração ────────────────────────────────────────────────
+// ── Calibração MPU6050 ────────────────────────────────────────
 float offsetX = 0, offsetY = 0, offsetZ = 0;
 
 // ── WiFi ──────────────────────────────────────────────────────
 WiFiClient cliente;
+
+// ── Bateria (reservado — hardware pendente) ───────────────────
+// Pino A0 → divisor de tensão R1=10kΩ / R2=10kΩ
+// Pack LiFePO4 2S: 8.4V (100%) → 6.0V (0%)
+// Descomentar quando o hardware estiver montado:
+// #define PINO_BATERIA A0
+// #define TENSAO_MAX   8.4
+// #define TENSAO_MIN   6.0
 
 // =============================================================
 //  SETUP
@@ -104,46 +117,47 @@ void setup() {
   Serial.begin(115200);
   Wire.begin();
 
+  // ── OLED ──
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
-    Serial.println("OLED não encontrado");
+    Serial.println("ERRO: OLED não encontrado");
     while (1);
   }
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
-  mostrarMensagem("MIPBC1", "Iniciando...", "");
+  telaBoasVindas();
 
+  // ── MLX90614 ──
   if (!mlx.begin()) {
-    mostrarMensagem("ERRO", "MLX90614", "Verifique ligacao");
+    telaErro("MLX90614", "Verifique ligacao");
     while (1);
   }
 
+  // ── MPU6050 ──
   if (!mpu.begin()) {
-    mostrarMensagem("ERRO", "MPU6050", "Verifique ligacao");
+    telaErro("MPU6050", "Verifique ligacao");
     while (1);
   }
-
   mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
   mpu.setGyroRange(MPU6050_RANGE_500_DEG);
   mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
 
-  mostrarMensagem("Calibrando...", "Mantenha o sensor", "em repouso");
+  // ── Calibração MPU6050 ──
+  telaCalibrar();
   calibrar();
-  mostrarMensagem("Calibrado!", "Offsets removidos", "OK");
-  delay(1000);
 
-  mostrarMensagem("WiFi", "Conectando...", WIFI_SSID);
+  // ── WiFi ──
+  telaConectando();
   WiFi.begin(WIFI_SSID, WIFI_SENHA);
   int tentativas = 0;
   while (WiFi.status() != WL_CONNECTED && tentativas < 20) {
     delay(500);
     tentativas++;
   }
-
   if (WiFi.status() == WL_CONNECTED) {
     ThingSpeak.begin(cliente);
-    mostrarMensagem("WiFi OK", WiFi.localIP().toString().c_str(), "");
+    telaWiFiOK();
   } else {
-    mostrarMensagem("WiFi FALHOU", "Modo offline", "Dados locais OK");
+    telaWiFiErro();
   }
   delay(1500);
 }
@@ -152,39 +166,57 @@ void setup() {
 //  LOOP
 // =============================================================
 void loop() {
+  // ── Leituras ──
   float tempObjeto   = mlx.readObjectTempC();
   float tempAmbiente = mlx.readAmbientTempC();
 
   float rmsX, rmsY, rmsZ;
   calcularRMS(rmsX, rmsY, rmsZ);
 
-  float  rmsMax   = max(rmsX, max(rmsY, rmsZ));
-  String zona     = determinarZona(rmsMax);
-  String zonaDesc = descricaoZona(zona);
+  float  rmsMax = max(rmsX, max(rmsY, rmsZ));
+  String zona   = determinarZona(rmsMax);
+  int    nivelT = nivelTemperatura(tempObjeto);
 
-  Serial.print("TObj: ");  Serial.print(tempObjeto, 1);
-  Serial.print(" C  |  TAmb: "); Serial.print(tempAmbiente, 1); Serial.println(" C");
-  Serial.print("X: "); Serial.print(rmsX, 3);
-  Serial.print("  Y: "); Serial.print(rmsY, 3);
-  Serial.print("  Z: "); Serial.print(rmsZ, 3);
-  Serial.print("  mm/s  →  Zona "); Serial.println(zona + " " + zonaDesc);
-  Serial.println("---");
+  // ── Serial Monitor ──
+  Serial.print("TObj: ");     Serial.print(tempObjeto, 1);
+  Serial.print(" C  TAmb: "); Serial.print(tempAmbiente, 1);
+  Serial.print(" C  | X: ");  Serial.print(rmsX, 2);
+  Serial.print("  Y: ");      Serial.print(rmsY, 2);
+  Serial.print("  Z: ");      Serial.print(rmsZ, 2);
+  Serial.print(" mm/s | Zona: "); Serial.print(zona);
+  Serial.print(" | Temp: ");  Serial.println(labelTemperatura(nivelT));
 
+  // ── Alternância de telas ──
   unsigned long agora = millis();
   if (agora - ultimaTroca >= INTERVALO_TELA) {
     telaAtual   = (telaAtual + 1) % NUM_TELAS;
     ultimaTroca = agora;
   }
 
-  switch (telaAtual) {
-    case 0: telaTemperatura("OBJETO",   tempObjeto,   TEMP_LIMITE); break;
-    case 1: telaTemperatura("AMBIENTE", tempAmbiente, 45.0);        break;
-    case 2: telaVibracaoNumerica(rmsX, rmsY, rmsZ);                 break;
-    case 3: telaVibracaoGrafico(rmsX, rmsY, rmsZ);                  break;
-    case 4: telaZonaISO(zona, zonaDesc, rmsMax);                    break;
-    case 5: telaWiFi();                                              break;
+  // ── Perigo tem prioridade — pisca aviso de parada ──
+  if (nivelT == 3) {
+    if ((agora / 500) % 2 == 0) {
+      telaTemperatura(tempObjeto, nivelT);
+    } else {
+      display.clearDisplay();
+      display.setTextSize(2);
+      display.setCursor(4, 14);
+      display.println("!! PARAR !!");
+      display.setTextSize(1);
+      display.setCursor(16, 46);
+      display.println("Temp. critica");
+      display.display();
+    }
+  } else {
+    switch (telaAtual) {
+      case 0: telaTemperatura(tempObjeto, nivelT);    break;
+      case 1: telaVibracao(rmsX, rmsY, rmsZ, zona);  break;
+      case 2: telaWiFiStatus();                       break;
+      case 3: telaBateria();                          break;
+    }
   }
 
+  // ── Envio ThingSpeak ──
   if (agora - ultimoEnvio >= INTERVALO_ENVIO) {
     ultimoEnvio = agora;
     enviarThingSpeak(tempObjeto, tempAmbiente, rmsX, rmsY, rmsZ);
@@ -192,14 +224,33 @@ void loop() {
 }
 
 // =============================================================
-//  CALIBRAÇÃO — Usa a média bruta de cada eixo como offset
-//  Cancela ruído e gravidade automaticamente, em qualquer
-//  orientação do sensor
+//  NÍVEIS DE TEMPERATURA — ABNT NBR IEC 60034-1
+//  Retorna: 0=Normal | 1=Atenção | 2=Crítico | 3=Perigo
+// =============================================================
+int nivelTemperatura(float temp) {
+  if (temp >= TEMP_PERIGO)  return 3;
+  if (temp >= TEMP_CRITICO) return 2;
+  if (temp >= TEMP_ATENCAO) return 1;
+  return 0;
+}
+
+String labelTemperatura(int nivel) {
+  switch (nivel) {
+    case 0: return "NORMAL";
+    case 1: return "ATENCAO";
+    case 2: return "CRITICO";
+    case 3: return "PERIGO";
+  }
+  return "---";
+}
+
+// =============================================================
+//  CALIBRAÇÃO — Média bruta dos 3 eixos
+//  Cancela gravidade + ruído em qualquer orientação
 // =============================================================
 void calibrar() {
   const int N = 200;
   float somaX = 0, somaY = 0, somaZ = 0;
-
   for (int i = 0; i < N; i++) {
     sensors_event_t a, g, temp;
     mpu.getEvent(&a, &g, &temp);
@@ -208,50 +259,39 @@ void calibrar() {
     somaZ += a.acceleration.z;
     delay(5);
   }
-
   offsetX = somaX / N;
   offsetY = somaY / N;
   offsetZ = somaZ / N;
-
   Serial.print("Offset X: "); Serial.print(offsetX);
   Serial.print(" | Y: ");     Serial.print(offsetY);
   Serial.print(" | Z: ");     Serial.println(offsetZ);
 }
 
 // =============================================================
-//  CÁLCULO RMS — velocidade instantânea sem acúmulo
-//  Resultado em mm/s (padrão ISO 20816-3)
+//  CÁLCULO RMS — Velocidade instantânea sem acúmulo de drift
+//  Resultado em mm/s conforme ISO 20816-3
 // =============================================================
 void calcularRMS(float &rmsX, float &rmsY, float &rmsZ) {
   float somaX2 = 0, somaY2 = 0, somaZ2 = 0;
   float dt = INTERVALO_MS / 1000.0;
-
   for (int i = 0; i < NUM_AMOSTRAS; i++) {
     sensors_event_t a, g, temp;
     mpu.getEvent(&a, &g, &temp);
-
-    float ax = a.acceleration.x - offsetX;
-    float ay = a.acceleration.y - offsetY;
-    float az = a.acceleration.z - offsetZ;
-
-    float vx = ax * dt;
-    float vy = ay * dt;
-    float vz = az * dt;
-
+    float vx = (a.acceleration.x - offsetX) * dt;
+    float vy = (a.acceleration.y - offsetY) * dt;
+    float vz = (a.acceleration.z - offsetZ) * dt;
     somaX2 += vx * vx;
     somaY2 += vy * vy;
     somaZ2 += vz * vz;
-
     delay(INTERVALO_MS);
   }
-
   rmsX = sqrt(somaX2 / NUM_AMOSTRAS) * 1000.0;
   rmsY = sqrt(somaY2 / NUM_AMOSTRAS) * 1000.0;
   rmsZ = sqrt(somaZ2 / NUM_AMOSTRAS) * 1000.0;
 }
 
 // =============================================================
-//  ZONAS ISO 20816-3
+//  ZONA ISO 20816-3
 // =============================================================
 String determinarZona(float rms) {
   if (rms <= ZONA_A) return "A";
@@ -276,137 +316,308 @@ void enviarThingSpeak(float tObj, float tAmb, float vX, float vY, float vZ) {
     delay(3000);
     if (WiFi.status() != WL_CONNECTED) return;
   }
-
   ThingSpeak.setField(1, tObj);
   ThingSpeak.setField(2, tAmb);
   ThingSpeak.setField(3, vX);
   ThingSpeak.setField(4, vY);
   ThingSpeak.setField(5, vZ);
+  int res = ThingSpeak.writeFields(CHANNEL_ID, API_KEY);
+  Serial.println(res == 200 ? "ThingSpeak: OK" : "ThingSpeak: ERRO " + String(res));
+}
 
-  int resultado = ThingSpeak.writeFields(CHANNEL_ID, API_KEY);
-  Serial.println(resultado == 200 ? "ThingSpeak: OK" : "ThingSpeak: ERRO " + String(resultado));
+// =============================================================
+//  LEITURA DE BATERIA (reservado)
+// =============================================================
+int lerBateria() {
+  // int raw      = analogRead(PINO_BATERIA);
+  // float tensao = raw * (5.0 / 1023.0) * 2.0;
+  // int pct      = (int)((tensao - TENSAO_MIN) / (TENSAO_MAX - TENSAO_MIN) * 100.0);
+  // return constrain(pct, 0, 100);
+  return -1; // -1 = hardware não conectado
 }
 
 // =============================================================
 //  TELAS OLED
 // =============================================================
 
-void mostrarMensagem(const char* l1, const char* l2, const char* l3) {
+// ── Tela 1: TEMPERATURA ──────────────────────────────────────
+// Termômetro gráfico à esquerda, valor grande à direita,
+// badge de nível no topo. Apenas temperatura do objeto.
+void telaTemperatura(float tempObj, int nivel) {
   display.clearDisplay();
-  display.setTextSize(1);
-  display.setCursor(0, 10); display.println(l1);
-  display.setCursor(0, 26); display.println(l2);
-  display.setCursor(0, 42); display.println(l3);
-  display.display();
-}
 
-void telaTemperatura(const char* tipo, float temp, float limite) {
-  display.clearDisplay();
+  // Título
   display.setTextSize(1);
   display.setCursor(0, 0);
-  display.print("TEMP "); display.println(tipo);
+  display.print("TEMPERATURA");
+
+  // Badge de nível (canto superior direito)
+  String lbl = labelTemperatura(nivel);
+  int lblX   = 128 - (lbl.length() * 6) - 1;
+  if (nivel == 0) {
+    display.setCursor(lblX, 0);
+    display.print(lbl);
+  } else {
+    display.fillRect(lblX - 2, 0, (lbl.length() * 6) + 3, 9, SSD1306_WHITE);
+    display.setTextColor(SSD1306_BLACK);
+    display.setCursor(lblX, 1);
+    display.print(lbl);
+    display.setTextColor(SSD1306_WHITE);
+  }
+
   display.drawLine(0, 10, 127, 10, SSD1306_WHITE);
+
+  // Termômetro gráfico (lado esquerdo)
+  const int TX = 4;
+  const int TY = 13;
+  const int TH = 44;
+  const int TW = 10;
+
+  display.drawRect(TX, TY, TW + 2, TH, SSD1306_WHITE);
+  display.drawCircle(TX + (TW / 2) + 1, TY + TH + 4, 5, SSD1306_WHITE);
+
+  float pct = constrain(tempObj / TEMP_PERIGO, 0.0, 1.0);
+  int   barH = (int)(pct * (TH - 2));
+  if (barH > 0) {
+    display.fillRect(TX + 1, TY + TH - 1 - barH, TW, barH, SSD1306_WHITE);
+    display.fillCircle(TX + (TW / 2) + 1, TY + TH + 4, 4, SSD1306_WHITE);
+  }
+
+  // Marcas dos limites no termômetro
+  auto marcaY = [&](float limite) {
+    int y = TY + TH - 1 - (int)(constrain(limite / TEMP_PERIGO, 0.0, 1.0) * (TH - 2));
+    display.drawLine(TX + TW + 2, y, TX + TW + 5, y, SSD1306_WHITE);
+  };
+  marcaY(TEMP_ATENCAO);
+  marcaY(TEMP_CRITICO);
+
+  // Valor principal — centralizado no espaço direito
+  display.setTextSize(3);
+  String valStr = String((int)round(tempObj));
+  int vW = valStr.length() * 18;
+  int vX = 22 + ((105 - vW) / 2);
+  int vY = 13 + ((50 - 24) / 2);
+  display.setCursor(vX, vY);
+  display.print(valStr);
+
+  // °C ao lado
   display.setTextSize(2);
-  display.setCursor(10, 18);
-  display.print(temp, 1); display.print(" C");
-  display.setTextSize(1);
-  display.setCursor(0, 50);
-  display.println(temp >= limite ? "!! ACIMA DO LIMITE !!" : "Normal");
+  display.setCursor(vX + vW + 2, vY);
+  display.print("\xB0""C");
+
   display.display();
 }
 
-void telaVibracaoNumerica(float vX, float vY, float vZ) {
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setCursor(0, 0);
-  display.println("VIBRACAO mm/s RMS");
-  display.drawLine(0, 10, 127, 10, SSD1306_WHITE);
-  display.setCursor(0, 14);
-  display.print("X: "); display.print(vX, 2); display.println(" mm/s");
-  display.setCursor(0, 28);
-  display.print("Y: "); display.print(vY, 2); display.println(" mm/s");
-  display.setCursor(0, 42);
-  display.print("Z: "); display.print(vZ, 2); display.println(" mm/s");
-  display.display();
-}
-
-void telaVibracaoGrafico(float vX, float vY, float vZ) {
+// ── Tela 2: VIBRAÇÃO ─────────────────────────────────────────
+// Valores numéricos X/Y/Z + Zona ISO em quadrado com borda dupla
+void telaVibracao(float vX, float vY, float vZ, String zona) {
   display.clearDisplay();
 
+  // Título
   display.setTextSize(1);
   display.setCursor(0, 0);
-  display.println("VIBRACAO (barras)");
+  display.print("VIBRACAO  mm/s RMS");
   display.drawLine(0, 10, 127, 10, SSD1306_WHITE);
 
-  const int BAR_X      = 14;
-  const int BAR_W      = 86;
-  const int BAR_H      = 7;
-  const int VAL_X      = 103;
-  int   yPos[3]        = {14, 26, 38};
-  float vals[3]        = {vX, vY, vZ};
-  const char* nomes[3] = {"X", "Y", "Z"};
-
-  int pxZonaA = (int)(ZONA_A / ESCALA_GRAFICO * BAR_W);
-  int pxZonaB = (int)(ZONA_B / ESCALA_GRAFICO * BAR_W);
-  int pxZonaC = (int)(ZONA_C / ESCALA_GRAFICO * BAR_W);
+  // Valores numéricos (coluna esquerda, fonte 2)
+  int   yLinha[3]   = { 14, 30, 46 };
+  float vals[3]     = { vX, vY, vZ };
+  const char* eixos[3] = { "X", "Y", "Z" };
 
   for (int i = 0; i < 3; i++) {
-    float val = vals[i];
-    if (val > ESCALA_GRAFICO) val = ESCALA_GRAFICO;
-    int barPixels = (int)(val / ESCALA_GRAFICO * BAR_W);
+    display.setTextSize(1);
+    display.setCursor(0, yLinha[i] + 4);
+    display.print(eixos[i]);
+    display.print(":");
 
-    display.setCursor(0, yPos[i] + 1);
-    display.print(nomes[i]);
-    display.drawRect(BAR_X, yPos[i], BAR_W, BAR_H, SSD1306_WHITE);
-    if (barPixels > 0)
-      display.fillRect(BAR_X, yPos[i], barPixels, BAR_H, SSD1306_WHITE);
-    display.setCursor(VAL_X, yPos[i] + 1);
-    display.print(vals[i], 1);
-    if (vals[i] > ZONA_B) display.print("!");
+    display.setTextSize(2);
+    display.setCursor(16, yLinha[i]);
+    char buf[8];
+    dtostrf(vals[i], 4, 2, buf);
+    display.print(buf);
   }
 
-  display.drawLine(BAR_X, 50, BAR_X + BAR_W, 50, SSD1306_WHITE);
-  display.drawLine(BAR_X + pxZonaA, 50, BAR_X + pxZonaA, 53, SSD1306_WHITE);
-  display.drawLine(BAR_X + pxZonaB, 50, BAR_X + pxZonaB, 53, SSD1306_WHITE);
-  display.drawLine(BAR_X + pxZonaC, 50, BAR_X + pxZonaC, 53, SSD1306_WHITE);
-  display.setCursor(BAR_X,               55); display.print("A");
-  display.setCursor(BAR_X + pxZonaA + 1, 55); display.print("B");
-  display.setCursor(BAR_X + pxZonaB + 1, 55); display.print("C");
-  display.setCursor(BAR_X + pxZonaC + 1, 55); display.print("D");
+  // Quadrado vazado com borda dupla — Zona ISO
+  const int QX = 88;
+  const int QY = 14;
+  const int QS = 38;
+
+  display.drawRect(QX,     QY,     QS,     QS,     SSD1306_WHITE);
+  display.drawRect(QX + 1, QY + 1, QS - 2, QS - 2, SSD1306_WHITE);
+
+  // Letra da zona — fonte 4 (24x32px), centralizada no quadrado
+  display.setTextSize(4);
+  int letraX = QX + (QS - 24) / 2;
+  int letraY = QY + (QS - 32) / 2;
+  display.setCursor(letraX, letraY);
+  display.print(zona);
+
+  // Descrição abaixo do quadrado
+  display.setTextSize(1);
+  String desc  = descricaoZona(zona);
+  int    descX = QX + (QS - (int)(desc.length() * 6)) / 2;
+  display.setCursor(max(descX, QX), QY + QS + 2);
+  display.print(desc);
 
   display.display();
 }
 
-void telaZonaISO(String zona, String desc, float rmsMax) {
+// ── Tela 3: WIFI ─────────────────────────────────────────────
+// Sem ícone. ONLINE/OFFLINE em fonte 2. SSID e IP em fonte 1.
+void telaWiFiStatus() {
   display.clearDisplay();
-  display.setTextSize(1);
-  display.setCursor(0, 0);
-  display.println("ISO 20816-3");
-  display.drawLine(0, 10, 127, 10, SSD1306_WHITE);
-  display.setTextSize(2);
-  display.setCursor(0, 14);
-  display.print("ZONA "); display.println(zona);
-  display.setTextSize(1);
-  display.setCursor(0, 36); display.println(desc);
-  display.setCursor(0, 50);
-  display.print("Max: "); display.print(rmsMax, 2); display.println(" mm/s");
-  display.display();
-}
 
-void telaWiFi() {
-  display.clearDisplay();
   display.setTextSize(1);
   display.setCursor(0, 0);
-  display.println("STATUS WiFi");
+  display.print("CONEXAO");
   display.drawLine(0, 10, 127, 10, SSD1306_WHITE);
-  display.setCursor(0, 16);
-  if (WiFi.status() == WL_CONNECTED) {
-    display.println("Conectado");
-    display.setCursor(0, 30); display.println(WiFi.SSID());
-    display.setCursor(0, 44); display.println(WiFi.localIP().toString());
+
+  bool conectado = (WiFi.status() == WL_CONNECTED);
+
+  if (conectado) {
+    display.setTextSize(2);
+    display.setCursor(0, 14);
+    display.print("ONLINE");
+
+    display.setTextSize(1);
+    display.setCursor(0, 34);
+    display.print("Rede: ");
+    display.print(WiFi.SSID());
+
+    display.setCursor(0, 46);
+    display.print("IP: ");
+    display.print(WiFi.localIP());
   } else {
-    display.println("Desconectado");
-    display.setCursor(0, 30); display.println("Modo offline");
+    display.setTextSize(2);
+    display.setCursor(0, 14);
+    display.print("OFFLINE");
+
+    display.setTextSize(1);
+    display.setCursor(0, 36);
+    display.print("Sem conexao");
+    display.setCursor(0, 48);
+    display.print("com a rede");
   }
+
+  display.display();
+}
+
+// ── Tela 4: BATERIA ──────────────────────────────────────────
+// Barra horizontal + percentual grande.
+// Hardware pendente: divisor de tensão em A0.
+void telaBateria() {
+  display.clearDisplay();
+
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.print("BATERIA");
+  display.drawLine(0, 10, 127, 10, SSD1306_WHITE);
+
+  int pct = lerBateria();
+
+  if (pct < 0) {
+    // Hardware ainda não conectado
+    display.setTextSize(1);
+    display.setCursor(14, 22);
+    display.print("Sensor nao");
+    display.setCursor(14, 34);
+    display.print("conectado");
+    display.setCursor(14, 48);
+    display.print("(em breve)");
+  } else {
+    // Percentual em fonte grande
+    display.setTextSize(3);
+    int numX = pct == 100 ? 28 : pct >= 10 ? 36 : 52;
+    display.setCursor(numX, 14);
+    display.print(pct);
+    display.setTextSize(2);
+    display.setCursor(numX + (pct == 100 ? 54 : pct >= 10 ? 36 : 18), 20);
+    display.print("%");
+
+    // Barra gráfica de bateria
+    const int BX = 8, BY = 46, BW = 106, BH = 12;
+    display.drawRect(BX, BY, BW, BH, SSD1306_WHITE);
+    display.fillRect(BX + BW, BY + 3, 4, 6, SSD1306_WHITE); // terminal +
+    int fill = (int)(pct / 100.0 * (BW - 2));
+    if (fill > 0)
+      display.fillRect(BX + 1, BY + 1, fill, BH - 2, SSD1306_WHITE);
+
+    // Aviso bateria fraca
+    if (pct <= 20) {
+      display.setTextSize(1);
+      display.setCursor(22, BY + 2);
+      display.setTextColor(SSD1306_BLACK);
+      display.print("BATERIA FRACA");
+      display.setTextColor(SSD1306_WHITE);
+    }
+  }
+
+  display.display();
+}
+
+// =============================================================
+//  TELAS AUXILIARES (boot, calibração, erros)
+// =============================================================
+
+void telaBoasVindas() {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setCursor(16, 4);  display.println("MIPBC1 v2.1");
+  display.drawLine(0, 14, 127, 14, SSD1306_WHITE);
+  display.setCursor(4, 20);  display.println("Inspecao Preditiva");
+  display.setCursor(4, 32);  display.println("CEMPT SENAI");
+  display.setCursor(4, 44);  display.println("Sao Luis - MA");
+  display.display();
+  delay(2000);
+}
+
+void telaCalibrar() {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setCursor(0, 0);   display.println("CALIBRANDO...");
+  display.drawLine(0, 10, 127, 10, SSD1306_WHITE);
+  display.setCursor(0, 18);  display.println("Mantenha o sensor");
+  display.setCursor(0, 30);  display.println("em repouso.");
+  display.setCursor(0, 46);  display.println("Aguarde ~2 segundos");
+  display.display();
+}
+
+void telaConectando() {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setCursor(0, 0);   display.println("WIFI");
+  display.drawLine(0, 10, 127, 10, SSD1306_WHITE);
+  display.setCursor(0, 18);  display.println("Conectando...");
+  display.setCursor(0, 30);  display.println(WIFI_SSID);
+  display.display();
+}
+
+void telaWiFiOK() {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setCursor(0, 0);   display.println("WIFI OK");
+  display.drawLine(0, 10, 127, 10, SSD1306_WHITE);
+  display.setCursor(0, 18);  display.println(WiFi.SSID());
+  display.setCursor(0, 30);  display.println(WiFi.localIP());
+  display.display();
+}
+
+void telaWiFiErro() {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setCursor(0, 0);   display.println("WIFI FALHOU");
+  display.drawLine(0, 10, 127, 10, SSD1306_WHITE);
+  display.setCursor(0, 18);  display.println("Modo offline.");
+  display.setCursor(0, 30);  display.println("Dados locais OK.");
+  display.display();
+}
+
+void telaErro(const char* sensor, const char* msg) {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setCursor(0, 0);   display.println("ERRO");
+  display.drawLine(0, 10, 127, 10, SSD1306_WHITE);
+  display.setCursor(0, 18);  display.println(sensor);
+  display.setCursor(0, 30);  display.println(msg);
   display.display();
 }
