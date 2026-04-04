@@ -563,6 +563,174 @@
     text-decoration-color: var(--accent);
   }
 
+  /* ── Modal de sessão ── */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .modal-overlay.ativo { display: flex; }
+
+  .modal {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-top: 3px solid var(--accent2);
+    border-radius: var(--radius);
+    padding: 28px 32px;
+    width: 100%;
+    max-width: 440px;
+    font-family: var(--mono);
+  }
+
+  .modal-titulo {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+
+  .modal-sub {
+    font-size: 0.65rem;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+    margin-bottom: 20px;
+  }
+
+  .modal-label {
+    font-size: 0.62rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    display: block;
+    margin-bottom: 6px;
+  }
+
+  .modal-input {
+    width: 100%;
+    background: var(--panel2);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    padding: 8px 12px;
+    margin-bottom: 16px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+
+  .modal-input:focus { border-color: var(--accent2); }
+
+  .modal-btns {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    margin-top: 8px;
+  }
+
+  .btn-cancelar {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    padding: 6px 14px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border2);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    transition: all 0.15s;
+  }
+
+  .btn-cancelar:hover { border-color: var(--text2); color: var(--text2); }
+
+  .btn-confirmar {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    padding: 6px 14px;
+    border-radius: var(--radius);
+    border: 1px solid var(--accent2);
+    background: rgba(90,154,191,0.15);
+    color: var(--accent);
+    cursor: pointer;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    transition: all 0.15s;
+  }
+
+  .btn-confirmar:hover { background: rgba(90,154,191,0.28); }
+
+  /* ── Card de sessão ── */
+  .card-sessao {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent2);
+    border-radius: var(--radius);
+    padding: 12px 18px;
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+
+  .card-sessao.ativo { display: flex; }
+
+  .sessao-info { display: flex; flex-direction: column; gap: 3px; }
+
+  .sessao-label {
+    font-family: var(--mono);
+    font-size: 0.58rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+  }
+
+  .sessao-nome {
+    font-family: var(--mono);
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 0.06em;
+  }
+
+  .sessao-desc {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    color: var(--text2);
+    margin-top: 2px;
+  }
+
+  .sessao-meta {
+    display: flex;
+    gap: 24px;
+    align-items: center;
+  }
+
+  .sessao-meta-item { display: flex; flex-direction: column; gap: 2px; }
+
+  .sessao-meta-label {
+    font-family: var(--mono);
+    font-size: 0.58rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }
+
+  .sessao-meta-value {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--text2);
+  }
+
   /* ── Skip link acessibilidade ── */
   .skip-link {
     position: absolute;
@@ -636,11 +804,57 @@
   <div class="header-right" role="status" aria-live="polite" aria-label="Status da conexão">
     <div class="hc-titulo">Status da Rede</div>
     <div class="status-indicator" style="margin-top:4px">
-      <span class="status-dot" id="status-dot" aria-hidden="true"></span>
+      <span class="status-dot erro" id="status-dot" aria-hidden="true"></span>
       <span id="status-txt">Conectando...</span>
     </div>
   </div>
 </header>
+
+<!-- Modal Nova Sessão -->
+<div class="modal-overlay" id="modal-sessao" role="dialog" aria-modal="true" aria-labelledby="modal-titulo">
+  <div class="modal">
+    <div class="modal-titulo" id="modal-titulo">Nova Sessão de Monitoramento</div>
+    <div class="modal-sub">Identifique o equipamento ou teste que será monitorado</div>
+
+    <label class="modal-label" for="input-equipamento">Nome do Equipamento / Sessão *</label>
+    <input class="modal-input" id="input-equipamento" type="text"
+      placeholder="Ex: Motor Bomba 01, Teste Bancada..."
+      maxlength="60" autocomplete="off">
+
+    <label class="modal-label" for="input-descricao">Descrição (opcional)</label>
+    <input class="modal-input" id="input-descricao" type="text"
+      placeholder="Ex: Teste após manutenção preventiva..."
+      maxlength="100" autocomplete="off">
+
+    <div class="modal-btns">
+      <button class="btn-confirmar" onclick="confirmarSessao()">Iniciar Sessão</button>
+    </div>
+  </div>
+</div>
+
+<!-- Card de Sessão Ativa -->
+<div class="card-sessao" id="card-sessao" aria-label="Sessão de monitoramento ativa">
+  <div class="sessao-info">
+    <span class="sessao-label">Sessão Ativa</span>
+    <span class="sessao-nome" id="sessao-nome">—</span>
+    <span class="sessao-desc" id="sessao-desc"></span>
+  </div>
+  <div class="sessao-meta">
+    <div class="sessao-meta-item">
+      <span class="sessao-meta-label">Início</span>
+      <span class="sessao-meta-value" id="sessao-inicio">—</span>
+    </div>
+    <div class="sessao-meta-item">
+      <span class="sessao-meta-label">Duração</span>
+      <span class="sessao-meta-value" id="sessao-duracao">—</span>
+    </div>
+    <div class="sessao-meta-item">
+      <span class="sessao-meta-label">Leituras</span>
+      <span class="sessao-meta-value" id="sessao-leituras">0</span>
+    </div>
+    <button class="btn-cancelar" onclick="encerrarSessao()" style="height:fit-content" aria-label="Encerrar sessão atual">Encerrar</button>
+  </div>
+</div>
 
 <main id="conteudo-principal">
 <div class="grid">
@@ -810,7 +1024,7 @@
 
 <script>
   // ── Configuração ──────────────────────────────────────────
-  const CHANNEL_ID  = 3292611;
+  const CHANNEL_ID  = 2934631;
   const LIMITE_TEMP = 60;
   const LIMITE_C    = 7.1;
   const LIMITE_B    = 2.8;
@@ -1124,6 +1338,7 @@
 
   // ── Busca e atualiza dados ────────────────────────────────
   async function buscarDados() {
+    if (!sessao) return; // Só busca dados se houver sessão ativa
     try {
       // Temperatura (Field 1)
       const urlTemp = `https://api.thingspeak.com/channels/${CHANNEL_ID}/fields/1.json?results=${NUM_PONTOS}`;
@@ -1236,6 +1451,12 @@
       document.getElementById('status-dot').className   = 'status-dot';
       document.getElementById('status-txt').textContent = 'Online';
 
+      // Atualiza contagem de leituras da sessão
+      if (sessao) {
+        contagemLeituras++;
+        document.getElementById('sessao-leituras').textContent = contagemLeituras;
+      }
+
     } catch (e) {
       document.getElementById('status-dot').className   = 'status-dot erro';
       document.getElementById('status-txt').textContent = 'Offline';
@@ -1298,9 +1519,77 @@
     btn.disabled = false;
   }
 
+  // ── Sessão ───────────────────────────────────────────────────
+  let sessao = null;
+  let intervaloDuracao = null;
+  let contagemLeituras = 0;
+
+  function abrirModal() {
+    document.getElementById('modal-sessao').classList.add('ativo');
+    document.getElementById('input-equipamento').focus();
+  }
+
+  function fecharModal() {
+    document.getElementById('modal-sessao').classList.remove('ativo');
+    document.getElementById('input-equipamento').value = '';
+    document.getElementById('input-descricao').value = '';
+  }
+
+  function confirmarSessao() {
+    const nome = document.getElementById('input-equipamento').value.trim();
+    if (!nome) {
+      document.getElementById('input-equipamento').focus();
+      document.getElementById('input-equipamento').style.borderColor = 'var(--danger)';
+      setTimeout(() => document.getElementById('input-equipamento').style.borderColor = '', 2000);
+      return;
+    }
+    const desc  = document.getElementById('input-descricao').value.trim();
+    const agora = new Date();
+
+    sessao = { nome, desc, inicio: agora };
+    contagemLeituras = 0;
+
+    document.getElementById('sessao-nome').textContent  = nome;
+    document.getElementById('sessao-desc').textContent  = desc;
+    document.getElementById('sessao-desc').style.display = desc ? 'block' : 'none';
+    document.getElementById('sessao-inicio').textContent =
+      agora.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) +
+      ' — ' + agora.toLocaleDateString('pt-BR');
+    document.getElementById('sessao-leituras').textContent = '0';
+    document.getElementById('card-sessao').classList.add('ativo');
+
+    // Atualiza duração a cada segundo
+    if (intervaloDuracao) clearInterval(intervaloDuracao);
+    intervaloDuracao = setInterval(() => {
+      const diff  = Math.floor((new Date() - sessao.inicio) / 1000);
+      const h     = Math.floor(diff / 3600);
+      const m     = Math.floor((diff % 3600) / 60);
+      const s     = diff % 60;
+      document.getElementById('sessao-duracao').textContent =
+        (h > 0 ? h + 'h ' : '') + (m > 0 || h > 0 ? m + 'min ' : '') + s + 's';
+    }, 1000);
+
+    fecharModal();
+    buscarDados();
+    setInterval(buscarDados, INTERVALO); // Inicia ciclo de atualização
+  }
+
+  function encerrarSessao() {
+    sessao = null;
+    contagemLeituras = 0;
+    if (intervaloDuracao) clearInterval(intervaloDuracao);
+    document.getElementById('card-sessao').classList.remove('ativo');
+    // Limpa campos e reabre popup
+    document.getElementById('input-equipamento').value = '';
+    document.getElementById('input-descricao').value = '';
+    abrirModal();
+  }
+
+  // Modal obrigatório — ESC e clique fora não fecham
+
   // ── Inicia ────────────────────────────────────────────────
-  buscarDados();
-  setInterval(buscarDados, INTERVALO);
+  // Popup abre automaticamente ao entrar no dashboard
+  window.addEventListener('load', () => abrirModal());
 </script>
 </body>
 </html>
