@@ -1444,21 +1444,86 @@
     btn.disabled = true;
 
     try {
-      const url  = `https://api.thingspeak.com/channels/${CHANNEL_ID}/fields/3,4,5.json?results=8000`;
-      const res  = await fetch(url);
-      const json = await res.json();
-      const feeds = json.feeds.filter(f => f.field3 || f.field4 || f.field5);
+      // Busca vibração (fields 3,4,5) e temperatura (fields 1,2) juntos
+      const [resVib, resTemp] = await Promise.all([
+        fetch(`https://api.thingspeak.com/channels/${CHANNEL_ID}/fields/3,4,5.json?results=8000`),
+        fetch(`https://api.thingspeak.com/channels/${CHANNEL_ID}/fields/1,2.json?results=8000`)
+      ]);
+      const [jsonVib, jsonTemp] = await Promise.all([resVib.json(), resTemp.json()]);
 
+      const feedsVib  = jsonVib.feeds.filter(f => f.field3 || f.field4 || f.field5);
+      const feedsTemp = jsonTemp.feeds.filter(f => f.field1);
+
+      const agora = new Date();
+
+      // ── Informações da sessão ──
+      const nomeSessao = sessao ? sessao.nome : 'Sessao nao identificada';
+      const descSessao = sessao && sessao.desc ? sessao.desc : '';
+      const inicioSessao = sessao
+        ? sessao.inicio.toLocaleString('pt-BR')
+        : 'Nao registrado';
+      const duracaoSessao = sessao
+        ? (() => {
+            const diff = Math.floor((agora - sessao.inicio) / 1000);
+            const h = Math.floor(diff / 3600);
+            const m = Math.floor((diff % 3600) / 60);
+            const s = diff % 60;
+            return (h > 0 ? h + 'h ' : '') + (m > 0 || h > 0 ? m + 'min ' : '') + s + 's';
+          })()
+        : 'Nao registrado';
+
+      // ── Estatísticas da sessão ──
+      const todasTemps = feedsTemp.map(f => parseFloat(f.field1));
+      const tempMedia  = todasTemps.length ? (todasTemps.reduce((a,b) => a+b, 0) / todasTemps.length).toFixed(1) : '--';
+      const tempMax    = todasTemps.length ? Math.max(...todasTemps).toFixed(1) : '--';
+      const tempMin    = todasTemps.length ? Math.min(...todasTemps).toFixed(1) : '--';
+
+      const todasVibs  = feedsVib.map(f => Math.max(parseFloat(f.field3||0), parseFloat(f.field4||0), parseFloat(f.field5||0)));
+      const vibMedia   = todasVibs.length ? (todasVibs.reduce((a,b) => a+b, 0) / todasVibs.length).toFixed(3) : '--';
+      const vibMax     = todasVibs.length ? Math.max(...todasVibs).toFixed(3) : '--';
+      const zonaFinal  = todasVibs.length ? zonaISO(Math.max(...todasVibs)).zona : '--';
+
+      // Contagem de leituras por nível de temperatura
+      const contNormal  = todasTemps.filter(v => v < 60).length;
+      const contAtencao = todasTemps.filter(v => v >= 60 && v < 80).length;
+      const contCritico = todasTemps.filter(v => v >= 80 && v < 100).length;
+      const contPerigo  = todasTemps.filter(v => v >= 100).length;
+
+      // ── Monta o CSV ──
       const linhas = [
-        'MIPBC1 - Modulo de Inspecao Preditiva de Baixo Custo',
-        'CEMPT SENAI Distrito Industrial - Sao Luis MA',
-        'Sensor: MPU6050 | Norma: ISO 20816-3',
-        'Zonas: A<=1.4 | B<=2.8 | C<=7.1 | D>7.1 mm/s RMS',
-        '',
+        ';;;;;;;;;;',
+        ';MIPBC1 - MODULO DE INSPECAO PREDITIVA DE BAIXO CUSTO;;;;;;;;;;',
+        ';CEMPT SENAI Distrito Industrial - Sao Luis MA;;;;;;;;;;',
+        ';;;;;;;;;;',
+        ';=== IDENTIFICACAO DA SESSAO ===;;;;;;;;;;',
+        `;Equipamento / Sessao;${nomeSessao};;;;;;;;;;`,
+        descSessao ? `;Descricao;${descSessao};;;;;;;;;;` : null,
+        `;Inicio da Sessao;${inicioSessao};;;;;;;;;;`,
+        `;Duracao;${duracaoSessao};;;;;;;;;;`,
+        `;Exportado em;${agora.toLocaleString('pt-BR')};;;;;;;;;;`,
+        ';;;;;;;;;;',
+        ';=== RESUMO DE TEMPERATURA (ABNT NBR IEC 60034-1) ===;;;;;;;;;;',
+        `;Total de leituras;${todasTemps.length};;;;;;;;;;`,
+        `;Temperatura media;${tempMedia} C;;;;;;;;;;`,
+        `;Temperatura maxima;${tempMax} C;;;;;;;;;;`,
+        `;Temperatura minima;${tempMin} C;;;;;;;;;;`,
+        `;Normal (< 60C);${contNormal} leituras;;;;;;;;;;`,
+        `;Atencao (60-80C);${contAtencao} leituras;;;;;;;;;;`,
+        `;Critico (80-100C);${contCritico} leituras;;;;;;;;;;`,
+        `;Perigo (> 100C);${contPerigo} leituras;;;;;;;;;;`,
+        ';;;;;;;;;;',
+        ';=== RESUMO DE VIBRACAO (ISO 20816-3) ===;;;;;;;;;;',
+        `;Total de leituras;${todasVibs.length};;;;;;;;;;`,
+        `;Vibracao media (max eixo);${vibMedia} mm/s;;;;;;;;;;`,
+        `;Vibracao maxima;${vibMax} mm/s;;;;;;;;;;`,
+        `;Zona mais critica atingida;${zonaFinal};;;;;;;;;;`,
+        `;Limites: A<=1.4 | B<=2.8 | C<=7.1 | D>7.1 mm/s RMS;;;;;;;;;;`,
+        ';;;;;;;;;;',
+        ';=== DADOS DE VIBRACAO ===;;;;;;;;;;',
         'Sequencia;Data;Hora;Eixo X (mm/s);Eixo Y (mm/s);Eixo Z (mm/s);Zona ISO;Status'
-      ];
+      ].filter(l => l !== null);
 
-      feeds.forEach((f, i) => {
+      feedsVib.forEach((f, i) => {
         const vx   = parseFloat(f.field3 || 0);
         const vy   = parseFloat(f.field4 || 0);
         const vz   = parseFloat(f.field5 || 0);
@@ -1468,11 +1533,15 @@
         linhas.push(`${i+1};${dt.data};${dt.hora};${vx.toFixed(3)};${vy.toFixed(3)};${vz.toFixed(3)};${zi.zona};${zi.label}`);
       });
 
-      const blob  = new Blob(['\uFEFF' + linhas.join('\n')], { type: 'text/csv;charset=utf-8;' });
-      const link  = document.createElement('a');
-      const agora = new Date();
+      // Nome do arquivo inclui nome da sessão
+      const nomeArquivo = sessao
+        ? `MIPBC1_${sessao.nome.replace(/[^a-zA-Z0-9]/g, '_')}_${agora.toLocaleDateString('pt-BR').replace(/\//g,'-')}`
+        : `MIPBC1_${agora.toLocaleDateString('pt-BR').replace(/\//g,'-')}`;
+
+      const blob = new Blob(['\uFEFF' + linhas.join('\n')], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
       link.href     = URL.createObjectURL(blob);
-      link.download = `MIPBC1_vibracao_${agora.toLocaleDateString('pt-BR').replace(/\//g,'-')}.csv`;
+      link.download = nomeArquivo + '.csv';
       link.click();
       URL.revokeObjectURL(link.href);
       btn.textContent = '↓ Exportar CSV';
