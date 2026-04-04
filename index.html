@@ -1036,68 +1036,40 @@
   let graficaAtivo = 0; // 0 = temperatura, 1 = vibração
   const LABELS_NAV = ['TEMPERATURA', 'VIBRAÇÃO'];
 
-  // ── Gráfico Temperatura — Dispersão por nível ───────────────
+  // ── Gráfico Temperatura — Área com gradiente de cor ─────────
+  function corPonto(v) {
+    if (v >= 100) return '#8c1414';
+    if (v >= 80)  return '#e05c5c';
+    if (v >= 60)  return '#e0a85c';
+    return '#6abf8a';
+  }
+
   const ctxTemp = document.getElementById('grafico-temp').getContext('2d');
   const graficoTemp = new Chart(ctxTemp, {
-    type: 'scatter',
+    type: 'line',
     data: {
-      datasets: [
-        {
-          label: 'Normal',
-          data: [],
-          backgroundColor: 'rgba(106,191,138,0.85)',
-          pointRadius: 5,
-          pointHoverRadius: 7,
-          pointBorderColor: '#25292e',
-          pointBorderWidth: 1
-        },
-        {
-          label: 'Atenção',
-          data: [],
-          backgroundColor: 'rgba(224,168,92,0.85)',
-          pointRadius: 5,
-          pointHoverRadius: 7,
-          pointBorderColor: '#25292e',
-          pointBorderWidth: 1
-        },
-        {
-          label: 'Crítico',
-          data: [],
-          backgroundColor: 'rgba(224,92,92,0.85)',
-          pointRadius: 5,
-          pointHoverRadius: 7,
-          pointBorderColor: '#25292e',
-          pointBorderWidth: 1
-        },
-        {
-          label: 'Perigo',
-          data: [],
-          backgroundColor: 'rgba(140,20,20,0.9)',
-          pointRadius: 6,
-          pointHoverRadius: 8,
-          pointBorderColor: '#ff4444',
-          pointBorderWidth: 1
-        }
-      ]
+      labels: [],
+      datasets: [{
+        label: 'Temperatura (°C)',
+        data: [],
+        borderColor: '#6abf8a',
+        backgroundColor: 'rgba(106,191,138,0.12)',
+        borderWidth: 2.5,
+        pointRadius: 4,
+        pointBackgroundColor: [],
+        pointBorderColor: '#25292e',
+        pointBorderWidth: 1.5,
+        pointHoverRadius: 6,
+        fill: true,
+        tension: 0.4
+      }]
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      interaction: { mode: 'nearest', intersect: true },
+      interaction: { mode: 'index', intersect: false },
       plugins: {
-        legend: {
-          display: true,
-          position: 'top',
-          align: 'end',
-          labels: {
-            color: '#9aa3ac',
-            font: { family: 'Roboto Mono', size: 9 },
-            boxWidth: 10,
-            boxHeight: 10,
-            usePointStyle: true,
-            pointStyle: 'circle'
-          }
-        },
+        legend: { display: false },
         tooltip: {
           backgroundColor: '#2e3338',
           borderColor: '#3a3f45',
@@ -1108,19 +1080,20 @@
           titleFont: { family: 'Roboto Mono', size: 10 },
           bodyFont:  { family: 'Roboto Mono', size: 11 },
           callbacks: {
-            title: items => 'Leitura #' + (items[0].dataIndex + 1),
+            title: items => 'Horário: ' + items[0].label,
             label: item => {
-              const d = item.raw;
-              return item.dataset.label + ': ' + d.y.toFixed(1) + ' °C  |  ' + d.hora;
+              const v = item.parsed.y;
+              const nivel = v >= 100 ? 'PERIGO' : v >= 80 ? 'CRÍTICO' : v >= 60 ? 'ATENÇÃO' : 'NORMAL';
+              return ' ' + v.toFixed(1) + ' °C  —  ' + nivel;
             }
           }
         },
         annotation: {
           annotations: {
-            faixaNormal:  { type: 'box', yMin: 0,   yMax: 60,  backgroundColor: 'rgba(106,191,138,0.05)', borderWidth: 0 },
-            faixaAtencao: { type: 'box', yMin: 60,  yMax: 80,  backgroundColor: 'rgba(224,168,92,0.05)',  borderWidth: 0 },
-            faixaCritico: { type: 'box', yMin: 80,  yMax: 100, backgroundColor: 'rgba(224,92,92,0.05)',   borderWidth: 0 },
-            faixaPerigo:  { type: 'box', yMin: 100, yMax: 130, backgroundColor: 'rgba(140,20,20,0.05)',   borderWidth: 0 },
+            faixaNormal:  { type: 'box', yMin: 0,   yMax: 60,  backgroundColor: 'rgba(106,191,138,0.04)', borderWidth: 0 },
+            faixaAtencao: { type: 'box', yMin: 60,  yMax: 80,  backgroundColor: 'rgba(224,168,92,0.04)',  borderWidth: 0 },
+            faixaCritico: { type: 'box', yMin: 80,  yMax: 100, backgroundColor: 'rgba(224,92,92,0.04)',   borderWidth: 0 },
+            faixaPerigo:  { type: 'box', yMin: 100, yMax: 130, backgroundColor: 'rgba(140,20,20,0.04)',   borderWidth: 0 },
             limAtencao: {
               type: 'line', yMin: 60, yMax: 60,
               borderColor: 'rgba(224,168,92,0.4)', borderWidth: 1, borderDash: [4,4],
@@ -1147,30 +1120,13 @@
       },
       scales: {
         x: {
-          type: 'linear',
-          title: {
-            display: true,
-            text: 'Leitura',
-            color: '#5a6470',
-            font: { family: 'Roboto Mono', size: 9 }
-          },
-          ticks: { color: '#5a6470', font: { family: 'Roboto Mono', size: 9 }, maxTicksLimit: 10 },
+          ticks: { color: '#5a6470', font: { family: 'Roboto Mono', size: 9 }, maxTicksLimit: 8 },
           grid:  { color: 'rgba(58,63,69,0.4)' }
         },
         y: {
           min: 0,
-          title: {
-            display: true,
-            text: 'Temperatura (°C)',
-            color: '#5a6470',
-            font: { family: 'Roboto Mono', size: 9 }
-          },
-          ticks: {
-            color: '#5a6470',
-            font: { family: 'Roboto Mono', size: 9 },
-            callback: v => v + '°C'
-          },
-          grid: { color: 'rgba(58,63,69,0.4)' }
+          ticks: { color: '#5a6470', font: { family: 'Roboto Mono', size: 9 }, callback: v => v + '°C' },
+          grid:  { color: 'rgba(58,63,69,0.4)' }
         }
       }
     }
@@ -1363,19 +1319,31 @@
         const alerta   = atual >= LIMITE_TEMP;
         const corLinha = alerta ? '#e05c5c' : '#5a9abf';
 
-        // Distribui pontos nos 4 datasets por nível (scatter)
-        const scNormal = [], scAtencao = [], scCritico = [], scPerigo = [];
-        valsTemp.forEach((v, i) => {
-          const ponto = { x: i + 1, y: v, hora: labelsT[i] };
-          if      (v >= 100) scPerigo.push(ponto);
-          else if (v >= 80)  scCritico.push(ponto);
-          else if (v >= 60)  scAtencao.push(ponto);
-          else               scNormal.push(ponto);
-        });
-        graficoTemp.data.datasets[0].data = scNormal;
-        graficoTemp.data.datasets[1].data = scAtencao;
-        graficoTemp.data.datasets[2].data = scCritico;
-        graficoTemp.data.datasets[3].data = scPerigo;
+        // Atualiza gráfico de área com gradiente de cor por nível
+        const cores = valsTemp.map(corPonto);
+
+        // Gradiente da linha acompanha os níveis
+        const chartArea = graficoTemp.chartArea;
+        if (chartArea && valsTemp.length > 1) {
+          const gradLinha = ctxTemp.createLinearGradient(chartArea.left, 0, chartArea.right, 0);
+          valsTemp.forEach((v, i) => {
+            gradLinha.addColorStop(i / (valsTemp.length - 1), corPonto(v));
+          });
+          graficoTemp.data.datasets[0].borderColor = gradLinha;
+
+          // Gradiente do preenchimento (vertical — do topo para base)
+          const gradFundo = ctxTemp.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
+          gradFundo.addColorStop(0,    'rgba(140,20,20,0.5)');
+          gradFundo.addColorStop(0.15, 'rgba(224,92,92,0.4)');
+          gradFundo.addColorStop(0.35, 'rgba(224,168,92,0.3)');
+          gradFundo.addColorStop(0.65, 'rgba(106,191,138,0.2)');
+          gradFundo.addColorStop(1,    'rgba(106,191,138,0.02)');
+          graficoTemp.data.datasets[0].backgroundColor = gradFundo;
+        }
+
+        graficoTemp.data.labels                              = labelsT;
+        graficoTemp.data.datasets[0].data                    = valsTemp;
+        graficoTemp.data.datasets[0].pointBackgroundColor    = cores;
         graficoTemp.update();
 
         const elAtual = document.getElementById('val-atual');
