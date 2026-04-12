@@ -1,0 +1,456 @@
+// ============================================================
+//  MIPBC1 — Módulo de Inspeção Preditiva de Baixo Custo
+//  Versão 1 — Arduino UNO R3 (sem WiFi)
+//
+//  Base normativa:
+//  • Temperatura: ABNT NBR IEC 60034-1 (Máquinas Girantes)
+//  • Vibração:    ISO 20816-3 / ABNT NBR IEC 60034-14
+//
+//  CEMPT SENAI Distrito Industrial — São Luís, MA
+//  Prof. Dartisson Castro Reis | Turma TEC-ELE-118
+//
+// ── NÍVEIS DE TEMPERATURA (ABNT NBR IEC 60034-1) ─────────────
+//  Normal  → até  60°C  → sem alerta
+//  Atenção → 60 a  80°C → badge invertido no OLED
+//  Crítico → 80 a 100°C → badge invertido no OLED
+//  Perigo  → acima 100°C→ tela alternando !! PARAR !!
+//
+// ── ZONAS ISO 20816-3 (vibração em mm/s RMS) ─────────────────
+//  Zona A → até 1.4  → ÓTIMO   (máquina nova)
+//  Zona B → até 2.8  → BOM     (operação contínua)
+//  Zona C → até 7.1  → ALERTA  (investigar)
+//  Zona D → acima 7.1→ PERIGO  (parar imediatamente)
+//
+// ── TELAS OLED (3 telas, 5 s cada) ──────────────────────────
+//  1 → Temperatura (ícone termômetro + nível)
+//  2 → Vibração (valores numéricos + zona em quadrado)
+//  3 → Status (temperatura, vibração, zona, leituras)
+//
+// ── GERENCIAMENTO DE ENERGIA (OLED) ──────────────────────────
+//  Apaga   → 1 minuto sem vibração acima da Zona A
+//  Reativa → Zona B ou acima (vibração > 1.4 mm/s)
+//  Exceção → Nível PERIGO: OLED nunca apaga
+//
+// ── SAÍDA DE DADOS ───────────────────────────────────────────
+//  Serial Monitor (115200 baud):
+//  [HH:MM:SS] TObj | TAmb | X | Y | Z mm/s | Zona | Nivel | #
+//
+// ── LIGAÇÕES ELÉTRICAS ───────────────────────────────────────
+//
+//  OLED 0.96" SSD1306:
+//  VCC → 3.3V
+//  GND → GND
+//  SDA → SDA (pino dedicado)
+//  SCL → SCL (pino dedicado)
+//
+//  MLX90614 (sensor de temperatura IR):
+//  VCC → 3.3V   ← ATENÇÃO: nunca ligar no 5V
+//  GND → GND
+//  SDA → A4
+//  SCL → A5
+//
+//  MPU6050 (sensor de vibração):
+//  VCC → 5V
+//  GND → GND
+//  SDA → SDA (pino dedicado)
+//  SCL → SCL (pino dedicado)
+//  AD0 → desconectado (endereço padrão 0x68)
+//
+//  Endereços I2C:
+//  0x3C → OLED
+//  0x5A → MLX90614
+//  0x68 → MPU6050
+//
+// ── BIBLIOTECAS NECESSÁRIAS ──────────────────────────────────
+//  Adafruit SSD1306
+//  Adafruit GFX Library
+//  Adafruit MLX90614
+//  MPU6050 by Electronic Cats (ou jrowberg)
+// ============================================================
+
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <Adafruit_MLX90614.h>
+#include <MPU6050.h>
+
+const float TEMP_ATENCAO = 60.0;
+const float TEMP_CRITICO = 80.0;
+const float TEMP_PERIGO  = 100.0;
+const float ZONA_A = 1.4;
+const float ZONA_B = 2.8;
+const float ZONA_C = 7.1;
+
+#define LARGURA 128
+#define ALTURA   64
+#define RESET    -1
+Adafruit_SSD1306  display(LARGURA, ALTURA, &Wire, RESET);
+Adafruit_MLX90614 mlx;
+MPU6050 mpu;
+
+int telaAtual              = 0;
+const int NUM_TELAS        = 3;
+unsigned long ultimaTroca  = 0;
+const long INTERVALO_TELA  = 5000;
+const int NUM_AMOSTRAS     = 100;
+const int INTERVALO_MS     = 10;
+
+// Offset em LSB (inteiro) — corrige gravidade e inclinação
+float offsetX = 0, offsetY = 0, offsetZ = 0;
+
+bool oledLigado               = true;
+unsigned long ultimaAtividade = 0;
+const long TIMEOUT_OLED       = 60000;
+unsigned long contLeituras    = 0;
+
+void setup() {
+  Serial.begin(115200);
+  Wire.begin();
+
+  // ── OLED ──
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println(F("ERRO: OLED"));
+    while (1);
+  }
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  telaBoasVindas();
+
+  // ── MLX90614 ──
+  if (!mlx.begin()) {
+    telaErro("MLX90614", "Verifique");
+    Serial.println(F("ERRO: MLX"));
+    while (1);
+  }
+  Serial.println(F("[OK] MLX90614"));
+
+  // ── MPU6050 ──
+  mpu.initialize();
+  if (!mpu.testConnection()) {
+    telaErro("MPU6050", "Verifique");
+    Serial.println(F("ERRO: MPU"));
+    while (1);
+  }
+  mpu.setFullScaleAccelRange(MPU6050_ACCEL_FS_8);
+  mpu.setDLPFMode(MPU6050_DLPF_BW_20);
+  Serial.println(F("[OK] MPU6050"));
+
+  // ── Calibração ──
+  telaCalibrar();
+  calibrar();
+
+  ultimaAtividade = millis();
+
+  Serial.println(F("============================================"));
+  Serial.println(F("  MIPBC1 | CEMPT SENAI | Sao Luis MA"));
+  Serial.println(F("  NBR IEC 60034-1 | ISO 20816-3"));
+  Serial.println(F("============================================"));
+}
+
+void loop() {
+  float tempObj = mlx.readObjectTempC();
+  float tempAmb = mlx.readAmbientTempC();
+
+  float rmsX, rmsY, rmsZ;
+  calcularRMS(rmsX, rmsY, rmsZ);
+
+  float rmsMax = max(rmsX, max(rmsY, rmsZ));
+  int   zona   = zonaNum(rmsMax);
+  int   nivelT = nivelTemperatura(tempObj);
+
+  contLeituras++;
+  unsigned long agora = millis();
+
+  // ── Serial Monitor ──
+  printTimestamp();
+  Serial.print(F("TObj:")); Serial.print(tempObj, 1);
+  Serial.print(F(" TAmb:")); Serial.print(tempAmb, 1);
+  Serial.print(F(" X:")); Serial.print(rmsX, 3);
+  Serial.print(F(" Y:")); Serial.print(rmsY, 3);
+  Serial.print(F(" Z:")); Serial.print(rmsZ, 3);
+  Serial.print(F(" Zona:")); Serial.print((char)('A' + zona));
+  Serial.print(F(" Temp:")); Serial.print(labelTemp(nivelT));
+  Serial.print(F(" #")); Serial.println(contLeituras);
+
+  // ── Gerenciamento OLED ──
+  bool emPerigo = (nivelT == 3);
+  if (rmsMax > ZONA_A) {
+    ultimaAtividade = agora;
+    if (!oledLigado) ligarOLED();
+  }
+  if (!emPerigo && oledLigado && (agora - ultimaAtividade >= TIMEOUT_OLED))
+    desligarOLED();
+  if (emPerigo && !oledLigado)
+    ligarOLED();
+
+  // ── Telas ──
+  if (oledLigado) {
+    if (agora - ultimaTroca >= INTERVALO_TELA) {
+      telaAtual   = (telaAtual + 1) % NUM_TELAS;
+      ultimaTroca = agora;
+    }
+    if (nivelT == 3) {
+      if ((agora / 500) % 2 == 0) {
+        telaTemperatura(tempObj, nivelT);
+      } else {
+        display.clearDisplay();
+        display.setTextSize(2);
+        display.setCursor(4, 14);
+        display.print(F("!! PARAR !!"));
+        display.setTextSize(1);
+        display.setCursor(16, 46);
+        display.print(F("Temp. critica"));
+        display.display();
+      }
+    } else {
+      switch (telaAtual) {
+        case 0: telaTemperatura(tempObj, nivelT);      break;
+        case 1: telaVibracao(rmsX, rmsY, rmsZ, zona);  break;
+        case 2: telaSensores(tempObj, rmsMax, zona);    break;
+      }
+    }
+  }
+}
+
+// =============================================================
+//  TIMESTAMP
+// =============================================================
+void printTimestamp() {
+  unsigned long s = millis() / 1000;
+  unsigned long m = s / 60;
+  unsigned long h = m / 60;
+  s %= 60; m %= 60; h %= 24;
+  Serial.print(F("["));
+  if (h < 10) Serial.print(F("0")); Serial.print(h); Serial.print(F(":"));
+  if (m < 10) Serial.print(F("0")); Serial.print(m); Serial.print(F(":"));
+  if (s < 10) Serial.print(F("0")); Serial.print(s);
+  Serial.print(F("] "));
+}
+
+// =============================================================
+//  NÍVEIS E ZONAS
+// =============================================================
+int nivelTemperatura(float t) {
+  if (t >= TEMP_PERIGO)  return 3;
+  if (t >= TEMP_CRITICO) return 2;
+  if (t >= TEMP_ATENCAO) return 1;
+  return 0;
+}
+
+const char* labelTemp(int n) {
+  switch (n) {
+    case 0: return "NORMAL";
+    case 1: return "ATENCAO";
+    case 2: return "CRITICO";
+    case 3: return "PERIGO";
+  }
+  return "---";
+}
+
+int zonaNum(float rms) {
+  if (rms <= ZONA_A) return 0;
+  if (rms <= ZONA_B) return 1;
+  if (rms <= ZONA_C) return 2;
+  return 3;
+}
+
+const char* descZona(int z) {
+  switch (z) {
+    case 0: return "OTIMO";
+    case 1: return "BOM";
+    case 2: return "ALERTA";
+    case 3: return "PERIGO";
+  }
+  return "---";
+}
+
+// =============================================================
+//  CALIBRAÇÃO — Offset em LSB
+// =============================================================
+void calibrar() {
+  const int N = 200;
+  long sx = 0, sy = 0, sz = 0;
+  int16_t ax, ay, az, gx, gy, gz;
+  for (int i = 0; i < N; i++) {
+    mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+    sx += ax; sy += ay; sz += az;
+    delay(5);
+  }
+  offsetX = sx / N;
+  offsetY = sy / N;
+  offsetZ = sz / N;
+  Serial.print(F("[OK] Cal X:")); Serial.print(offsetX);
+  Serial.print(F(" Y:"));         Serial.print(offsetY);
+  Serial.print(F(" Z:"));         Serial.println(offsetZ);
+}
+
+// =============================================================
+//  CÁLCULO RMS
+// =============================================================
+void calcularRMS(float &rmsX, float &rmsY, float &rmsZ) {
+  float sx = 0, sy = 0, sz = 0;
+  float dt = INTERVALO_MS / 1000.0;
+  const float FATOR = 9.81 / 4096.0;
+  int16_t ax, ay, az, gx, gy, gz;
+  for (int i = 0; i < NUM_AMOSTRAS; i++) {
+    mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+    float acx = (ax - offsetX) * FATOR;
+    float acy = (ay - offsetY) * FATOR;
+    float acz = (az - offsetZ) * FATOR;
+    float vx  = acx * dt;
+    float vy  = acy * dt;
+    float vz  = acz * dt;
+    sx += vx * vx;
+    sy += vy * vy;
+    sz += vz * vz;
+    delay(INTERVALO_MS);
+  }
+  rmsX = sqrt(sx / NUM_AMOSTRAS) * 1000.0;
+  rmsY = sqrt(sy / NUM_AMOSTRAS) * 1000.0;
+  rmsZ = sqrt(sz / NUM_AMOSTRAS) * 1000.0;
+}
+
+// =============================================================
+//  GERENCIAMENTO DO OLED
+// =============================================================
+void ligarOLED() {
+  display.ssd1306_command(SSD1306_DISPLAYON);
+  oledLigado = true;
+}
+
+void desligarOLED() {
+  display.ssd1306_command(SSD1306_DISPLAYOFF);
+  oledLigado = false;
+}
+
+// =============================================================
+//  TELAS OLED
+// =============================================================
+
+void telaTemperatura(float tempObj, int nivel) {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.print(F("TEMPERATURA"));
+
+  const char* lbl = labelTemp(nivel);
+  int lblX = 128 - (strlen(lbl) * 6) - 1;
+  if (nivel == 0) {
+    display.setCursor(lblX, 0);
+    display.print(lbl);
+  } else {
+    display.fillRect(lblX - 2, 0, (strlen(lbl) * 6) + 3, 9, SSD1306_WHITE);
+    display.setTextColor(SSD1306_BLACK);
+    display.setCursor(lblX, 1);
+    display.print(lbl);
+    display.setTextColor(SSD1306_WHITE);
+  }
+  display.drawLine(0, 10, 127, 10, SSD1306_WHITE);
+
+  const int TX = 7, TY = 14;
+  display.drawRect(TX - 2, TY, 5, 30, SSD1306_WHITE);
+  display.drawRect(TX - 1, TY + 1, 3, 28, SSD1306_WHITE);
+  display.fillRect(TX - 1, TY + 10, 3, 19, SSD1306_WHITE);
+  display.fillCircle(TX, TY + 33, 6, SSD1306_WHITE);
+  display.drawCircle(TX, TY + 33, 7, SSD1306_WHITE);
+  display.drawLine(TX + 3, TY + 6,  TX + 6, TY + 6,  SSD1306_WHITE);
+  display.drawLine(TX + 3, TY + 15, TX + 6, TY + 15, SSD1306_WHITE);
+  display.drawLine(TX + 3, TY + 24, TX + 6, TY + 24, SSD1306_WHITE);
+
+  display.setTextSize(3);
+  int val = (int)round(tempObj);
+  int vW  = (val >= 100 ? 3 : val >= 10 ? 2 : 1) * 18;
+  display.setCursor(28 + ((100 - vW) / 2), 18);
+  display.print(val);
+  display.setTextSize(2);
+  display.setCursor(28 + ((100 - 24) / 2), 46);
+  display.print(F("\xB0""C"));
+  display.display();
+}
+
+void telaVibracao(float vX, float vY, float vZ, int zona) {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.print(F("VIBRACAO mm/s RMS"));
+  display.drawLine(0, 10, 127, 10, SSD1306_WHITE);
+
+  float vals[3]        = { vX, vY, vZ };
+  const char* eixos[3] = { "X:", "Y:", "Z:" };
+  int yPos[3]          = { 14, 30, 46 };
+
+  for (int i = 0; i < 3; i++) {
+    display.setTextSize(1);
+    display.setCursor(0, yPos[i] + 4);
+    display.print(eixos[i]);
+    display.setTextSize(2);
+    display.setCursor(16, yPos[i]);
+    char buf[8];
+    dtostrf(vals[i], 4, 2, buf);
+    display.print(buf);
+  }
+
+  const int QX = 88, QY = 14, QS = 38;
+  display.drawRect(QX,     QY,     QS,     QS,     SSD1306_WHITE);
+  display.drawRect(QX + 1, QY + 1, QS - 2, QS - 2, SSD1306_WHITE);
+  display.setTextSize(4);
+  display.setCursor(QX + (QS - 24) / 2, QY + (QS - 32) / 2);
+  display.print((char)('A' + zona));
+  display.setTextSize(1);
+  const char* desc = descZona(zona);
+  int descX = QX + (QS - strlen(desc) * 6) / 2;
+  display.setCursor(max(descX, QX), QY + QS + 2);
+  display.print(desc);
+  display.display();
+}
+
+void telaSensores(float tempObj, float rmsMax, int zona) {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.print(F("STATUS"));
+  display.drawLine(0, 10, 127, 10, SSD1306_WHITE);
+  display.setCursor(0, 14);
+  display.print(F("Temp: ")); display.print(tempObj, 1); display.print(F(" C"));
+  display.setCursor(0, 26);
+  display.print(F("Vib:  ")); display.print(rmsMax, 2);  display.print(F(" mm/s"));
+  display.setCursor(0, 38);
+  display.print(F("Zona: ")); display.print((char)('A' + zona));
+  display.print(F(" "));      display.print(descZona(zona));
+  display.setCursor(0, 52);
+  display.print(F("Leit: ")); display.print(contLeituras);
+  display.display();
+}
+
+void telaBoasVindas() {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setCursor(16, 4);  display.print(F("MIPBC1 v2.1"));
+  display.drawLine(0, 14, 127, 14, SSD1306_WHITE);
+  display.setCursor(4, 20);  display.print(F("Inspecao Preditiva"));
+  display.setCursor(4, 32);  display.print(F("CEMPT SENAI"));
+  display.setCursor(4, 44);  display.print(F("Sao Luis - MA"));
+  display.display();
+  delay(2000);
+}
+
+void telaCalibrar() {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setCursor(0, 0);  display.print(F("CALIBRANDO..."));
+  display.drawLine(0, 10, 127, 10, SSD1306_WHITE);
+  display.setCursor(0, 18); display.print(F("Mantenha o sensor"));
+  display.setCursor(0, 30); display.print(F("em repouso."));
+  display.setCursor(0, 46); display.print(F("Aguarde ~2 segundos"));
+  display.display();
+}
+
+void telaErro(const char* sensor, const char* msg) {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setCursor(0, 0);  display.print(F("ERRO"));
+  display.drawLine(0, 10, 127, 10, SSD1306_WHITE);
+  display.setCursor(0, 18); display.print(sensor);
+  display.setCursor(0, 30); display.print(msg);
+  display.display();
+}
